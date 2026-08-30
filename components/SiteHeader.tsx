@@ -13,7 +13,6 @@ export default function SiteHeader() {
     <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/95 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
         <Link href="/" className="flex items-center gap-3">
-          {/* Header hanya menggunakan dua logo: Logo PKK dan Logo Kabupaten Minahasa */}
           <div className="flex items-center gap-3">
             <div className="relative h-12 w-12 shrink-0">
               <Image
