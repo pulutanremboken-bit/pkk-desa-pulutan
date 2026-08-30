@@ -1,6 +1,8 @@
 import ActivityCard from "@/components/ActivityCard";
 import { supabase } from "@/lib/supabase";
 
+export const dynamic = "force-dynamic";
+
 export default async function KegiatanPage() {
   let activities: any[] = [];
   if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
