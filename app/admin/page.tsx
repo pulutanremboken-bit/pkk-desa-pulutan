@@ -358,7 +358,7 @@ async function login(e: FormEvent) {
     setFile(e.target.files?.[0] ?? null);
   }
 
- async function saveHeroImage() {
+async function saveHeroImage() {
   setSavingHero(true);
   setMsg("");
   setError("");
@@ -421,7 +421,7 @@ async function login(e: FormEvent) {
           key: "hero_image",
           value: nextUrl,
           updated_at: new Date().toISOString(),
-        },
+        } as never,
         {
           onConflict: "key",
         }
@@ -431,7 +431,7 @@ async function login(e: FormEvent) {
       throw settingError;
     }
 
-    // Hapus foto hero lama setelah URL baru berhasil tersimpan.
+    // Hapus foto hero lama setelah foto baru berhasil disimpan.
     if (
       heroFile &&
       oldUrl &&
@@ -455,8 +455,6 @@ async function login(e: FormEvent) {
               .from("kegiatan")
               .remove([oldPath]);
 
-          // Tidak menghentikan proses jika penghapusan
-          // foto lama gagal.
           if (removeError) {
             console.warn(
               "Foto hero lama tidak dapat dihapus:",
@@ -477,9 +475,7 @@ async function login(e: FormEvent) {
         ? err.message
         : "Terjadi kesalahan saat memperbarui foto beranda.";
 
-    if (
-      rawMessage.includes("Failed to fetch")
-    ) {
+    if (rawMessage.includes("Failed to fetch")) {
       setError(
         "Gagal terhubung ke Supabase saat mengunggah foto. Periksa koneksi internet dan coba lagi."
       );
@@ -490,7 +486,6 @@ async function login(e: FormEvent) {
     setSavingHero(false);
   }
 }
-
   async function saveActivity(e: FormEvent) {
     e.preventDefault();
 
