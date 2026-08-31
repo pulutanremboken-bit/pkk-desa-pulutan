@@ -74,6 +74,12 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const DEFAULT_HERO_IMAGE =
+    "https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&w=1800&q=85";
+  const [heroImage, setHeroImage] = useState(DEFAULT_HERO_IMAGE);
+  const [heroFile, setHeroFile] = useState<File | null>(null);
+  const [savingHero, setSavingHero] = useState(false);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
 
@@ -107,6 +113,13 @@ export default function AdminPage() {
       setActivities((data ?? []) as Activity[]);
     }
 
+    const { data: setting } = await s
+      .from("site_settings")
+      .select("value")
+      .eq("key", "hero_image")
+      .maybeSingle();
+
+    setHeroImage(setting?.value || DEFAULT_HERO_IMAGE);
     setLoading(false);
   }
 
@@ -193,6 +206,74 @@ export default function AdminPage() {
 
   function handleFile(e: ChangeEvent<HTMLInputElement>) {
     setFile(e.target.files?.[0] ?? null);
+  }
+
+  async function saveHeroImage() {
+    setSavingHero(true);
+    setMsg("");
+    setError("");
+
+    const s = supabase();
+
+    const {
+      data: { user },
+    } = await s.auth.getUser();
+
+    if (!user) {
+      setError("Sesi admin sudah berakhir. Silakan login kembali.");
+      setLogged(false);
+      setSavingHero(false);
+      return;
+    }
+
+    let nextUrl = heroImage;
+    const oldUrl = heroImage;
+
+    if (heroFile) {
+      const safeName = heroFile.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+      const path = `site/hero-${Date.now()}-${safeName}`;
+
+      const upload = await s.storage
+        .from("kegiatan")
+        .upload(path, heroFile, { upsert: false });
+
+      if (upload.error) {
+        setError(upload.error.message);
+        setSavingHero(false);
+        return;
+      }
+
+      nextUrl = s.storage.from("kegiatan").getPublicUrl(path).data.publicUrl;
+    }
+
+    const { error: settingError } = await s
+      .from("site_settings")
+      .upsert(
+        { key: "hero_image", value: nextUrl, updated_at: new Date().toISOString() },
+        { onConflict: "key" }
+      );
+
+    if (settingError) {
+      setError(settingError.message);
+      setSavingHero(false);
+      return;
+    }
+
+    if (heroFile && oldUrl && oldUrl.includes("/storage/v1/object/public/kegiatan/")) {
+      const marker = "/storage/v1/object/public/kegiatan/";
+      const index = oldUrl.indexOf(marker);
+      if (index !== -1) {
+        const oldPath = decodeURIComponent(oldUrl.slice(index + marker.length));
+        if (oldPath.startsWith("site/")) {
+          await s.storage.from("kegiatan").remove([oldPath]);
+        }
+      }
+    }
+
+    setHeroImage(nextUrl);
+    setHeroFile(null);
+    setMsg("Foto beranda berhasil diperbarui.");
+    setSavingHero(false);
   }
 
   async function saveActivity(e: FormEvent) {
@@ -465,6 +546,53 @@ export default function AdminPage() {
           {error || msg}
         </div>
       )}
+
+      <div className="mb-8 rounded-3xl bg-white p-6 shadow-soft">
+        <div>
+          <p className="text-sm font-bold uppercase tracking-[.18em] text-pkk-600">
+            Pengaturan Beranda
+          </p>
+          <h2 className="mt-1 text-2xl font-black">Foto Utama Beranda</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            Foto ini tampil sebagai latar besar di bagian paling atas halaman utama.
+            Setelah disimpan, perubahan akan tampil di website publik.
+          </p>
+        </div>
+
+        <div className="mt-5 grid gap-5 md:grid-cols-[minmax(0,1fr)_280px] md:items-center">
+          <div>
+            <label className="text-sm font-semibold text-slate-700">
+              Pilih foto baru
+            </label>
+            <input
+              className="mt-2 block w-full text-sm"
+              type="file"
+              accept="image/*"
+              onChange={(e) => setHeroFile(e.target.files?.[0] ?? null)}
+            />
+            <p className="mt-2 text-xs text-slate-500">
+              Gunakan foto kegiatan/aktivitas PKK yang memiliki hak penggunaan.
+              Foto landscape beresolusi tinggi akan terlihat paling baik.
+            </p>
+            <button
+              type="button"
+              disabled={savingHero}
+              onClick={saveHeroImage}
+              className="mt-4 rounded-xl bg-pkk-600 px-5 py-3 text-sm font-bold text-white hover:bg-pkk-700 disabled:opacity-60"
+            >
+              {savingHero ? "Menyimpan..." : "Simpan Foto Beranda"}
+            </button>
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border bg-slate-100">
+            <img
+              src={heroImage}
+              alt="Pratinjau foto beranda"
+              className="aspect-video w-full object-cover"
+            />
+          </div>
+        </div>
+      </div>
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <div className="rounded-3xl bg-white p-6 shadow-soft">
