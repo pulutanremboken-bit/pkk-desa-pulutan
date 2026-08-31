@@ -88,119 +88,133 @@ export default function AdminPage() {
   const mountedRef = useRef(true);
   const dashboardRequestRef = useRef(0);
 
-  async function loadDashboard() {
-  const requestId = ++dashboardRequestRef.current;
-  const s = supabase();
+   async function loadDashboard() {
+    const requestId = ++dashboardRequestRef.current;
+    const s = supabase();
 
-  setLoading(true);
+    setLoading(true);
+    setError("");
 
-  try {
-    const {
-      data: { session },
-      error: sessionError,
-    } = await s.auth.getSession();
+    try {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await s.auth.getSession();
 
-    if (sessionError) {
-      throw sessionError;
-    }
+      if (sessionError) {
+        throw sessionError;
+      }
 
-    if (
-      !mountedRef.current ||
-      requestId !== dashboardRequestRef.current
-    ) {
-      return;
-    }
+      if (
+        !mountedRef.current ||
+        requestId !== dashboardRequestRef.current
+      ) {
+        return;
+      }
 
-    const user = session?.user;
+      const user = session?.user;
 
-    if (!user) {
-      setLogged(false);
-      setActivities([]);
-      return;
-    }
+      if (!user) {
+        setLogged(false);
+        setActivities([]);
+        return;
+      }
 
-    setEmail(user.email ?? "");
-    setLogged(true);
+      setEmail(user.email ?? "");
+      setLogged(true);
 
-    const [activitiesResult, settingResult] =
-      await Promise.all([
-        s
-          .from("kegiatan")
-          .select("*")
-          .order("event_date", { ascending: false })
-          .order("created_at", { ascending: false }),
+      const activitiesResult = await s
+        .from("kegiatan")
+        .select("*")
+        .order("event_date", { ascending: false })
+        .order("created_at", { ascending: false });
 
-        s
-          .from("site_settings")
-          .select("value")
-          .eq("key", "hero_image")
-          .maybeSingle(),
-      ]);
+      if (
+        !mountedRef.current ||
+        requestId !== dashboardRequestRef.current
+      ) {
+        return;
+      }
 
-    if (
-      !mountedRef.current ||
-      requestId !== dashboardRequestRef.current
-    ) {
-      return;
-    }
+      if (activitiesResult.error) {
+        setError(activitiesResult.error.message);
+      } else {
+        setActivities(
+          (activitiesResult.data ?? []) as Activity[]
+        );
+      }
 
-    if (activitiesResult.error) {
-      setError(activitiesResult.error.message);
-    } else {
-      setActivities(
-        (activitiesResult.data ?? []) as Activity[]
-      );
-    }
+      // Mengambil pengaturan foto beranda.
+      // Tabel site_settings belum memiliki tipe otomatis
+      // pada konfigurasi Supabase, sehingga data diberikan
+      // tipe secara eksplisit.
+      const settingResult = await s
+        .from("site_settings")
+        .select("value")
+        .eq("key", "hero_image")
+        .maybeSingle();
 
-    if (settingResult.error) {
-      setError(
-        settingResult.error.message ||
-          "Gagal memuat pengaturan beranda."
-      );
-    } else {
-      setHeroImage(
-        settingResult.data?.value ||
-          DEFAULT_HERO_IMAGE
-      );
-    }
-  } catch (err) {
-    if (
-      !mountedRef.current ||
-      requestId !== dashboardRequestRef.current
-    ) {
-      return;
-    }
+      if (
+        !mountedRef.current ||
+        requestId !== dashboardRequestRef.current
+      ) {
+        return;
+      }
 
-    const rawMessage =
-      err instanceof Error
-        ? err.message
-        : "Terjadi kesalahan saat memuat dashboard.";
+      if (settingResult.error) {
+        console.error(
+          "Gagal memuat pengaturan beranda:",
+          settingResult.error.message
+        );
 
-    if (
-      rawMessage.includes("Failed to fetch")
-    ) {
-      setError(
-        "Gagal terhubung ke Supabase. Periksa koneksi internet lalu coba lagi. Sesi admin tetap aman."
-      );
-    } else {
-      setError(rawMessage);
-    }
-  } finally {
-    if (
-      mountedRef.current &&
-      requestId === dashboardRequestRef.current
-    ) {
-      setLoading(false);
+        setHeroImage(DEFAULT_HERO_IMAGE);
+      } else {
+        const settingData =
+          settingResult.data as unknown as {
+            value: string;
+          } | null;
+
+        setHeroImage(
+          settingData?.value ||
+            DEFAULT_HERO_IMAGE
+        );
+      }
+    } catch (err) {
+      if (
+        !mountedRef.current ||
+        requestId !== dashboardRequestRef.current
+      ) {
+        return;
+      }
+
+      const rawMessage =
+        err instanceof Error
+          ? err.message
+          : "Terjadi kesalahan saat memuat dashboard.";
+
+      if (rawMessage.includes("Failed to fetch")) {
+        setError(
+          "Gagal terhubung ke Supabase. Periksa koneksi internet lalu coba lagi. Sesi admin tetap aman."
+        );
+      } else {
+        setError(rawMessage);
+      }
+    } finally {
+      if (
+        mountedRef.current &&
+        requestId === dashboardRequestRef.current
+      ) {
+        setLoading(false);
+      }
     }
   }
-}
 
 useEffect(() => {
   mountedRef.current = true;
 
-  const s = supabase();
+  loadDashboard();
 
-  void loadDashboard();
+  const s = supabase();
 
   const {
     data: { subscription },
@@ -208,34 +222,21 @@ useEffect(() => {
     if (!mountedRef.current) return;
 
     if (event === "SIGNED_OUT" || !session?.user) {
-      // Batalkan hasil request dashboard yang masih berjalan.
-      dashboardRequestRef.current += 1;
-
       setLogged(false);
-      setEmail("");
       setActivities([]);
-      setLoading(false);
-
+      setEmail("");
       return;
     }
 
-    setLogged(true);
-    setEmail(session.user.email ?? "");
-
-    // Hanya muat ulang dashboard ketika login baru terjadi.
-    // Ini mencegah loadDashboard dipanggil berulang untuk event lain.
     if (event === "SIGNED_IN") {
-      setPassword("");
-      void loadDashboard();
+      setEmail(session.user.email ?? "");
+      setLogged(true);
+      loadDashboard();
     }
   });
 
   return () => {
     mountedRef.current = false;
-
-    // Membatalkan request lama jika halaman admin ditutup.
-    dashboardRequestRef.current += 1;
-
     subscription.unsubscribe();
   };
 }, []);
