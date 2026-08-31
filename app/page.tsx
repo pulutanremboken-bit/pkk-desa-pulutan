@@ -21,16 +21,24 @@ async function getActivities() {
   return data || [];
 }
 
-async function getHeroImage() {
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return DEFAULT_HERO_IMAGE;
+type SiteSetting = {
+  value: string;
+};
 
-  const { data } = await supabase()
+async function getHeroImage() {
+  const { data: rawData, error } = await supabase()
     .from("site_settings")
     .select("value")
     .eq("key", "hero_image")
     .maybeSingle();
 
-  return data?.value || DEFAULT_HERO_IMAGE;
+  if (error || !rawData) {
+    return DEFAULT_HERO_IMAGE;
+  }
+
+  const data = rawData as unknown as SiteSetting;
+
+  return data.value || DEFAULT_HERO_IMAGE;
 }
 
 export default async function Home() {
