@@ -84,73 +84,175 @@ export default function AdminPage() {
   const [error, setError] = useState("");
 
   const fileRef = useRef<HTMLInputElement | null>(null);
+ 
+  const mountedRef = useRef(true);
+  const dashboardRequestRef = useRef(0);
 
   async function loadDashboard() {
-    const s = supabase();
+  const requestId = ++dashboardRequestRef.current;
+  const s = supabase();
 
+  setLoading(true);
+
+  try {
     const {
-      data: { user },
-    } = await s.auth.getUser();
+      data: { session },
+      error: sessionError,
+    } = await s.auth.getSession();
+
+    if (sessionError) {
+      throw sessionError;
+    }
+
+    if (
+      !mountedRef.current ||
+      requestId !== dashboardRequestRef.current
+    ) {
+      return;
+    }
+
+    const user = session?.user;
 
     if (!user) {
       setLogged(false);
-      setLoading(false);
+      setActivities([]);
       return;
     }
 
     setEmail(user.email ?? "");
     setLogged(true);
 
-    const { data, error: fetchError } = await s
-      .from("kegiatan")
-      .select("*")
-      .order("event_date", { ascending: false })
-      .order("created_at", { ascending: false });
+    const [activitiesResult, settingResult] =
+      await Promise.all([
+        s
+          .from("kegiatan")
+          .select("*")
+          .order("event_date", { ascending: false })
+          .order("created_at", { ascending: false }),
 
-    if (fetchError) {
-      setError(fetchError.message);
-    } else {
-      setActivities((data ?? []) as Activity[]);
+        s
+          .from("site_settings")
+          .select("value")
+          .eq("key", "hero_image")
+          .maybeSingle(),
+      ]);
+
+    if (
+      !mountedRef.current ||
+      requestId !== dashboardRequestRef.current
+    ) {
+      return;
     }
 
-    const { data: setting } = await s
-      .from("site_settings")
-      .select("value")
-      .eq("key", "hero_image")
-      .maybeSingle();
+    if (activitiesResult.error) {
+      setError(activitiesResult.error.message);
+    } else {
+      setActivities(
+        (activitiesResult.data ?? []) as Activity[]
+      );
+    }
 
-    setHeroImage(setting?.value || DEFAULT_HERO_IMAGE);
-    setLoading(false);
+    if (settingResult.error) {
+      setError(
+        settingResult.error.message ||
+          "Gagal memuat pengaturan beranda."
+      );
+    } else {
+      setHeroImage(
+        settingResult.data?.value ||
+          DEFAULT_HERO_IMAGE
+      );
+    }
+  } catch (err) {
+    if (
+      !mountedRef.current ||
+      requestId !== dashboardRequestRef.current
+    ) {
+      return;
+    }
+
+    const rawMessage =
+      err instanceof Error
+        ? err.message
+        : "Terjadi kesalahan saat memuat dashboard.";
+
+    if (
+      rawMessage.includes("Failed to fetch")
+    ) {
+      setError(
+        "Gagal terhubung ke Supabase. Periksa koneksi internet lalu coba lagi. Sesi admin tetap aman."
+      );
+    } else {
+      setError(rawMessage);
+    }
+  } finally {
+    if (
+      mountedRef.current &&
+      requestId === dashboardRequestRef.current
+    ) {
+      setLoading(false);
+    }
   }
+}
 
-  useEffect(() => {
-    loadDashboard();
+useEffect(() => {
+  mountedRef.current = true;
 
-    const s = supabase();
+  const s = supabase();
 
-    const {
-      data: { subscription },
-    } = s.auth.onAuthStateChange((_event, session) => {
-      setLogged(Boolean(session?.user));
-      if (session?.user) {
-        setEmail(session.user.email ?? "");
-        loadDashboard();
-      }
-    });
+  void loadDashboard();
 
-    return () => subscription.unsubscribe();
-  }, []);
+  const {
+    data: { subscription },
+  } = s.auth.onAuthStateChange((event, session) => {
+    if (!mountedRef.current) return;
 
-  async function login(e: FormEvent) {
-    e.preventDefault();
-    setMsg("");
-    setError("");
-    setLoading(true);
+    if (event === "SIGNED_OUT" || !session?.user) {
+      // Batalkan hasil request dashboard yang masih berjalan.
+      dashboardRequestRef.current += 1;
 
-    const { error: loginError } = await supabase().auth.signInWithPassword({
-      email,
-      password,
-    });
+      setLogged(false);
+      setEmail("");
+      setActivities([]);
+      setLoading(false);
+
+      return;
+    }
+
+    setLogged(true);
+    setEmail(session.user.email ?? "");
+
+    // Hanya muat ulang dashboard ketika login baru terjadi.
+    // Ini mencegah loadDashboard dipanggil berulang untuk event lain.
+    if (event === "SIGNED_IN") {
+      setPassword("");
+      void loadDashboard();
+    }
+  });
+
+  return () => {
+    mountedRef.current = false;
+
+    // Membatalkan request lama jika halaman admin ditutup.
+    dashboardRequestRef.current += 1;
+
+    subscription.unsubscribe();
+  };
+}, []);
+ 
+async function login(e: FormEvent) {
+  e.preventDefault();
+
+  setMsg("");
+  setError("");
+  setLoading(true);
+
+  try {
+    const { error: loginError } =
+      await supabase().auth.signInWithPassword({
+        email,
+        password,
+      });
 
     if (loginError) {
       setError(loginError.message);
@@ -159,17 +261,64 @@ export default function AdminPage() {
     }
 
     setPassword("");
-    await loadDashboard();
+
+    // Dashboard akan dimuat oleh event SIGNED_IN.
+    // Jangan panggil loadDashboard() lagi di sini.
+  } catch (err) {
+    const rawMessage =
+      err instanceof Error
+        ? err.message
+        : "Gagal melakukan login.";
+
+    if (rawMessage.includes("Failed to fetch")) {
+      setError(
+        "Gagal terhubung ke server saat login. Periksa koneksi internet lalu coba lagi."
+      );
+    } else {
+      setError(rawMessage);
+    }
+
+    setLoading(false);
   }
+}
 
   async function logout() {
-    await supabase().auth.signOut();
+  setError("");
+  setMsg("");
+
+  try {
+    const { error: signOutError } =
+      await supabase().auth.signOut();
+
+    if (signOutError) {
+      throw signOutError;
+    }
+
+    // Membatalkan request dashboard yang mungkin masih berjalan.
+    dashboardRequestRef.current += 1;
+
     setLogged(false);
+    setEmail("");
     setActivities([]);
     setForm(emptyForm);
     setEditingId(null);
+
     setMsg("Anda sudah keluar dari akun admin.");
+  } catch (err) {
+    const rawMessage =
+      err instanceof Error
+        ? err.message
+        : "Gagal keluar dari akun admin.";
+
+    if (rawMessage.includes("Failed to fetch")) {
+      setError(
+        "Gagal terhubung ke server saat keluar. Silakan coba lagi."
+      );
+    } else {
+      setError(rawMessage);
+    }
   }
+}
 
   function resetForm() {
     setForm(emptyForm);
@@ -208,21 +357,28 @@ export default function AdminPage() {
     setFile(e.target.files?.[0] ?? null);
   }
 
-  async function saveHeroImage() {
-    setSavingHero(true);
-    setMsg("");
-    setError("");
+ async function saveHeroImage() {
+  setSavingHero(true);
+  setMsg("");
+  setError("");
 
+  try {
     const s = supabase();
 
     const {
-      data: { user },
-    } = await s.auth.getUser();
+      data: { session },
+      error: sessionError,
+    } = await s.auth.getSession();
+
+    if (sessionError) {
+      throw sessionError;
+    }
+
+    const user = session?.user;
 
     if (!user) {
       setError("Sesi admin sudah berakhir. Silakan login kembali.");
       setLogged(false);
-      setSavingHero(false);
       return;
     }
 
@@ -230,51 +386,109 @@ export default function AdminPage() {
     const oldUrl = heroImage;
 
     if (heroFile) {
-      const safeName = heroFile.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+      const safeName = heroFile.name.replace(
+        /[^a-zA-Z0-9._-]/g,
+        "-"
+      );
+
       const path = `site/hero-${Date.now()}-${safeName}`;
 
-      const upload = await s.storage
+      const { error: uploadError } = await s.storage
         .from("kegiatan")
-        .upload(path, heroFile, { upsert: false });
+        .upload(path, heroFile, {
+          upsert: false,
+          contentType: heroFile.type,
+        });
 
-      if (upload.error) {
-        setError(upload.error.message);
-        setSavingHero(false);
-        return;
+      if (uploadError) {
+        throw uploadError;
       }
 
-      nextUrl = s.storage.from("kegiatan").getPublicUrl(path).data.publicUrl;
+      const {
+        data: { publicUrl },
+      } = s.storage
+        .from("kegiatan")
+        .getPublicUrl(path);
+
+      nextUrl = publicUrl;
     }
 
     const { error: settingError } = await s
       .from("site_settings")
       .upsert(
-        { key: "hero_image", value: nextUrl, updated_at: new Date().toISOString() },
-        { onConflict: "key" }
+        {
+          key: "hero_image",
+          value: nextUrl,
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "key",
+        }
       );
 
     if (settingError) {
-      setError(settingError.message);
-      setSavingHero(false);
-      return;
+      throw settingError;
     }
 
-    if (heroFile && oldUrl && oldUrl.includes("/storage/v1/object/public/kegiatan/")) {
-      const marker = "/storage/v1/object/public/kegiatan/";
+    // Hapus foto hero lama setelah URL baru berhasil tersimpan.
+    if (
+      heroFile &&
+      oldUrl &&
+      oldUrl.includes(
+        "/storage/v1/object/public/kegiatan/"
+      )
+    ) {
+      const marker =
+        "/storage/v1/object/public/kegiatan/";
+
       const index = oldUrl.indexOf(marker);
+
       if (index !== -1) {
-        const oldPath = decodeURIComponent(oldUrl.slice(index + marker.length));
+        const oldPath = decodeURIComponent(
+          oldUrl.slice(index + marker.length)
+        );
+
         if (oldPath.startsWith("site/")) {
-          await s.storage.from("kegiatan").remove([oldPath]);
+          const { error: removeError } =
+            await s.storage
+              .from("kegiatan")
+              .remove([oldPath]);
+
+          // Tidak menghentikan proses jika penghapusan
+          // foto lama gagal.
+          if (removeError) {
+            console.warn(
+              "Foto hero lama tidak dapat dihapus:",
+              removeError.message
+            );
+          }
         }
       }
     }
 
     setHeroImage(nextUrl);
     setHeroFile(null);
+
     setMsg("Foto beranda berhasil diperbarui.");
+  } catch (err) {
+    const rawMessage =
+      err instanceof Error
+        ? err.message
+        : "Terjadi kesalahan saat memperbarui foto beranda.";
+
+    if (
+      rawMessage.includes("Failed to fetch")
+    ) {
+      setError(
+        "Gagal terhubung ke Supabase saat mengunggah foto. Periksa koneksi internet dan coba lagi."
+      );
+    } else {
+      setError(rawMessage);
+    }
+  } finally {
     setSavingHero(false);
   }
+}
 
   async function saveActivity(e: FormEvent) {
     e.preventDefault();
