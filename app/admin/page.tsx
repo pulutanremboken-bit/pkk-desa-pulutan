@@ -536,7 +536,7 @@ async function saveHeroImage() {
           excerpt: form.excerpt,
           content: form.content,
           cover_url,
-        })
+        } as never)
         .eq("id", editingId);
 
       if (updateError) {
@@ -567,7 +567,7 @@ async function saveHeroImage() {
         content: form.content,
         cover_url,
         published: true,
-      });
+      } as never);
 
       if (insertError) {
         setError(insertError.message);
