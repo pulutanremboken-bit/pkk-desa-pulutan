@@ -5,20 +5,40 @@ import ActivityCard from "@/components/ActivityCard";
 
 import { supabase } from "@/lib/supabase";
 
+type Activity = {
+  id: string;
+  title: string;
+  slug: string;
+  category: string;
+  event_date: string;
+  location: string | null;
+  excerpt: string | null;
+  content: string;
+  cover_url: string | null;
+  published: boolean;
+  created_at: string;
+};
+
 const DEFAULT_HERO_IMAGE =
   "https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&w=1800&q=85";
 
-async function getActivities() {
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return [];
+async function getActivities(): Promise<Activity[]> {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    return [];
+  }
 
-  const { data } = await supabase()
+  const { data: rawData, error } = await supabase()
     .from("kegiatan")
     .select("*")
     .eq("published", true)
     .order("event_date", { ascending: false })
     .limit(6);
 
-  return data || [];
+  if (error || !rawData) {
+    return [];
+  }
+
+  return rawData as unknown as Activity[];
 }
 
 type SiteSetting = {
